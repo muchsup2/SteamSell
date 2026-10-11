@@ -151,31 +151,19 @@
       tg.ready();
     }
 
+    // ВАЖНО: замените на адрес вашего Cloudflare Worker (без слэша в конце)
+    const API = "https://green-brook-6734.daniilbobkov47.workers.dev/";
+
     let currentCategory = 'discounts';
     let featuredDiscounts = [];
     let featuredAll = [];
     let searchTimer = null;
 
-    // Универсальная загрузка через цепочку зеркал
-    async function fetchFromSteam(targetUrl) {
-      const mirrors = [
-        `https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`,
-        `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
-        `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
-      ];
-
-      for (let url of mirrors) {
-        try {
-          const res = await fetch(url, { cache: "no-store" });
-          if (res.ok) {
-            const data = await res.json();
-            if (data) return data;
-          }
-        } catch (e) {
-          continue;
-        }
-      }
-      throw new Error("Не удалось подключиться к серверам Steam");
+    // Загрузка данных через собственный прокси на Cloudflare Workers
+    async function fetchFromSteam(path) {
+      const res = await fetch(API + path);
+      if (!res.ok) throw new Error("Ошибка прокси");
+      return await res.json();
     }
 
     function openSteamApp(appId) {
@@ -212,7 +200,7 @@
       list.innerHTML = `<div class="status-msg">Получаем официальные акции Steam... ⏳</div>`;
 
       try {
-        const data = await fetchFromSteam("https://store.steampowered.com/api/featuredcategories/?cc=ru&l=russian");
+        const data = await fetchFromSteam("/featured");
 
         // 1. Только скидки
         featuredDiscounts = (data.specials?.items || []).map(g => ({
@@ -261,7 +249,7 @@
       list.innerHTML = `<div class="status-msg">Ищем «${query}» по всей базе Steam... ⏳</div>`;
 
       try {
-        const data = await fetchFromSteam(`https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(query)}&l=russian&cc=ru`);
+        const data = await fetchFromSteam(`/search?term=${encodeURIComponent(query)}`);
         let items = (data.items || []).map(g => ({
           id: g.id,
           name: g.name,
