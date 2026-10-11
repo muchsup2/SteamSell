@@ -7,13 +7,14 @@
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
-      --bg: var(--tg-theme-bg-color, #0e141b);
-      --card: var(--tg-theme-secondary-bg-color, #1b2838);
+      --bg: var(--tg-theme-bg-color, #12161c);
+      --card: var(--tg-theme-secondary-bg-color, #1a222d);
       --text: var(--tg-theme-text-color, #ffffff);
-      --hint: var(--tg-theme-hint-color, #8f98a0);
-      --accent: var(--tg-theme-button-color, #66c0f4);
+      --hint: var(--tg-theme-hint-color, #8395a7);
+      --accent: var(--tg-theme-button-color, #0088cc);
       --discount-bg: #4c6b22;
       --discount-text: #beee11;
+      --free-color: #2ecc71;
     }
 
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; margin: 0; padding: 0; }
@@ -32,20 +33,21 @@
     .search-box {
       width: 100%;
       padding: 12px 14px;
-      border-radius: 10px;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      background: rgba(0, 0, 0, 0.25);
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(0, 0, 0, 0.3);
       color: var(--text);
       font-size: 15px;
       outline: none;
       margin-bottom: 12px;
     }
+    .search-box:focus { border-color: var(--accent); }
 
     .categories {
       display: flex;
       gap: 8px;
       overflow-x: auto;
-      padding-bottom: 6px;
+      padding-bottom: 8px;
       margin-bottom: 14px;
       scrollbar-width: none;
     }
@@ -53,18 +55,20 @@
 
     .cat-btn {
       padding: 7px 14px;
-      border-radius: 18px;
+      border-radius: 20px;
       font-size: 13px;
       font-weight: 500;
       background: var(--card);
       color: var(--text);
       white-space: nowrap;
       cursor: pointer;
+      border: 1px solid rgba(255, 255, 255, 0.05);
     }
     .cat-btn.active {
       background: var(--accent);
-      color: #000;
+      color: #fff;
       font-weight: 600;
+      border-color: transparent;
     }
 
     .games-list { display: flex; flex-direction: column; gap: 10px; }
@@ -75,7 +79,7 @@
       background: var(--card);
       border-radius: 10px;
       overflow: hidden;
-      border: 1px solid rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.06);
       cursor: pointer;
       text-decoration: none;
       color: inherit;
@@ -86,7 +90,7 @@
       width: 120px;
       height: 65px;
       object-fit: cover;
-      background: #111;
+      background: #000;
       flex-shrink: 0;
     }
 
@@ -113,33 +117,33 @@
       background: var(--discount-bg);
       color: var(--discount-text);
       font-weight: 700;
-      font-size: 12px;
+      font-size: 11px;
       padding: 2px 6px;
       border-radius: 4px;
     }
     .old-price { text-decoration: line-through; color: var(--hint); font-size: 12px; }
     .new-price { font-weight: 700; color: #a4d007; }
+    .free-price { font-weight: 600; color: var(--free-color); }
+    .no-price { font-size: 12px; color: var(--hint); }
   </style>
 </head>
 <body>
 
   <header>
     <h1>SteamSell 🎮</h1>
-    <p>Регион: РФ • Нажмите для перехода в Steam</p>
+    <p>Официальные цены Steam (Россия, ₽) • Кликните для перехода</p>
   </header>
 
-  <input type="text" id="search" class="search-box" placeholder="Поиск по названию игры...">
+  <input type="text" id="search" class="search-box" placeholder="Поиск по всему Steam (название игры)...">
 
   <div class="categories">
-    <div class="cat-btn active" onclick="filterCat('all', this)">Все игры</div>
-    <div class="cat-btn" onclick="filterCat('action', this)">Экшен</div>
-    <div class="cat-btn" onclick="filterCat('rpg', this)">RPG</div>
-    <div class="cat-btn" onclick="filterCat('strategy', this)">Стратегии</div>
-    <div class="cat-btn" onclick="filterCat('indie', this)">Инди</div>
+    <div class="cat-btn active" onclick="switchCategory('discounts', this)">🔥 Только скидки</div>
+    <div class="cat-btn" onclick="switchCategory('popular', this)">🏆 Популярные игры</div>
+    <div class="cat-btn" onclick="switchCategory('all', this)">🌐 Все категории</div>
   </div>
 
   <div class="games-list" id="games">
-    <div class="status-msg">Загрузка скидок Steam... ⏳</div>
+    <div class="status-msg">Загрузка данных из каталога Steam... ⏳</div>
   </div>
 
   <script>
@@ -149,8 +153,8 @@
       tg.ready();
     }
 
-    let allGames = [];
-    let currentCategory = 'all';
+    let currentMode = 'discounts';
+    let searchDebounceTimer = null;
 
     function openSteamApp(appId) {
       const url = `https://store.steampowered.com/app/${appId}/`;
@@ -161,118 +165,159 @@
       }
     }
 
-    // Резервный надежный список на случай падения внешних прокси
-    const fallbackGames = [
-      { id: 292030, name: "The Witcher 3: Wild Hunt", cat: "rpg", disc: "-75%", old: "1 500 ₽", price: "375 ₽", img: "https://cdn.akamai.steamstatic.com/steam/apps/292030/header.jpg" },
-      { id: 1091500, name: "Cyberpunk 2077", cat: "rpg", disc: "-50%", old: "2 000 ₽", price: "1 000 ₽", img: "https://cdn.akamai.steamstatic.com/steam/apps/1091500/header.jpg" },
-      { id: 782330, name: "DOOM Eternal", cat: "action", disc: "-80%", old: "2 800 ₽", price: "560 ₽", img: "https://cdn.akamai.steamstatic.com/steam/apps/782330/header.jpg" },
-      { id: 289070, name: "Civilization VI", cat: "strategy", disc: "-90%", old: "1 999 ₽", price: "199 ₽", img: "https://cdn.akamai.steamstatic.com/steam/apps/289070/header.jpg" },
-      { id: 367520, name: "Hollow Knight", cat: "indie", disc: "-50%", old: "550 ₽", price: "275 ₽", img: "https://cdn.akamai.steamstatic.com/steam/apps/367520/header.jpg" },
-      { id: 1172470, name: "Apex Legends", cat: "action", disc: null, old: null, price: "Бесплатно", img: "https://cdn.akamai.steamstatic.com/steam/apps/1172470/header.jpg" }
-    ];
-
-    async function loadGames() {
-      // Используем быстрый сервис-прокси с тайм-аутом
-      const target = "https://store.steampowered.com/api/featuredcategories/?cc=ru&l=russian";
-      const proxy = `https://corsproxy.io/?${encodeURIComponent(target)}`;
-
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 4000); // 4 сек лимит
-
-        const res = await fetch(proxy, { signal: controller.signal });
-        clearTimeout(timer);
-
-        if (!res.ok) throw new Error("bad network");
-        const data = await res.json();
-
-        const parsed = [];
-        const seen = new Set();
-
-        const addItems = (items, defaultCat) => {
-          if (!items) return;
-          items.forEach(g => {
-            if (!g || !g.id || seen.has(g.id)) return;
-            seen.add(g.id);
-
-            const hasDisc = Boolean(g.discount_percent && g.discount_percent > 0);
-            parsed.push({
-              id: g.id,
-              name: g.name,
-              cat: defaultCat,
-              disc: hasDisc ? `-${g.discount_percent}%` : null,
-              old: hasDisc && g.original_price ? (g.original_price / 100).toLocaleString('ru-RU') + " ₽" : null,
-              price: g.final_price !== undefined ? (g.final_price === 0 ? "Бесплатно" : (g.final_price / 100).toLocaleString('ru-RU') + " ₽") : "Нет цены",
-              img: g.header_image || g.large_capsule_image || `https://cdn.akamai.steamstatic.com/steam/apps/${g.id}/header.jpg`
-            });
-          });
-        };
-
-        if (data.specials?.items) addItems(data.specials.items, 'action');
-        if (data.top_sellers?.items) addItems(data.top_sellers.items, 'rpg');
-        if (data.new_releases?.items) addItems(data.new_releases.items, 'indie');
-
-        allGames = parsed.length ? parsed : fallbackGames;
-      } catch (e) {
-        // Если прокси заблокирован или недоступен — мгновенно отдаем резервный каталог
-        allGames = fallbackGames;
+    function formatPriceHtml(item) {
+      // Бесплатная игра
+      if (item.is_free || (item.price && item.price.final === 0)) {
+        return `<span class="free-price">Бесплатно</span>`;
+      }
+      
+      // Если есть объект с ценой
+      if (item.price) {
+        const p = item.price;
+        if (p.discount_percent > 0) {
+          const oldP = (p.initial / 100).toLocaleString('ru-RU') + " ₽";
+          const newP = (p.final / 100).toLocaleString('ru-RU') + " ₽";
+          return `
+            <span class="discount-badge">-${p.discount_percent}%</span>
+            <span class="old-price">${oldP}</span>
+            <span class="new-price">${newP}</span>
+          `;
+        }
+        return `<span class="new-price" style="color: #fff;">${(p.final / 100).toLocaleString('ru-RU')} ₽</span>`;
       }
 
-      renderGames();
+      return `<span class="no-price">В корзину / Нет цены</span>`;
     }
 
-    function renderGames() {
-      const q = document.getElementById("search").value.toLowerCase().trim();
+    // Живой поиск по каталогу Steam (любая игра)
+    async function searchLiveSteam(query, onlyDiscounts = false) {
+      const list = document.getElementById("games");
+      list.innerHTML = `<div class="status-msg">Поиск в базе Steam... ⏳</div>`;
+
+      const steamSearchUrl = `https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(query)}&l=russian&cc=ru`;
+      const proxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(steamSearchUrl)}`;
+
+      try {
+        const res = await fetch(proxy);
+        const data = await res.json();
+        let items = data.items || [];
+
+        if (onlyDiscounts) {
+          items = items.filter(g => g.price && g.price.discount_percent > 0);
+        }
+
+        renderItems(items);
+      } catch (err) {
+        list.innerHTML = `<div class="status-msg">Не удалось загрузить результаты. Проверьте интернет.</div>`;
+      }
+    }
+
+    // Загрузка стартовой витрины актуальных предложений
+    async function loadFeatured() {
+      const list = document.getElementById("games");
+      list.innerHTML = `<div class="status-msg">Получение актуальных скидок Steam... ⏳</div>`;
+
+      const steamUrl = "https://store.steampowered.com/api/featuredcategories/?cc=ru&l=russian";
+      const proxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(steamUrl)}`;
+
+      try {
+        const res = await fetch(proxy);
+        const data = await res.json();
+        let items = [];
+
+        if (currentMode === 'discounts') {
+          // Выбираем только игры со скидкой
+          const specials = data.specials?.items || [];
+          items = specials.map(g => ({
+            id: g.id,
+            name: g.name,
+            tiny_image: g.header_image || `https://cdn.akamai.steamstatic.com/steam/apps/${g.id}/header.jpg`,
+            price: {
+              initial: g.original_price,
+              final: g.final_price,
+              discount_percent: g.discount_percent
+            }
+          }));
+        } else {
+          // Все популярные/лидеры
+          const top = data.top_sellers?.items || [];
+          items = top.map(g => ({
+            id: g.id,
+            name: g.name,
+            tiny_image: g.header_image || `https://cdn.akamai.steamstatic.com/steam/apps/${g.id}/header.jpg`,
+            price: {
+              initial: g.original_price,
+              final: g.final_price,
+              discount_percent: g.discount_percent || 0
+            }
+          }));
+        }
+
+        renderItems(items);
+      } catch (err) {
+        // Запасной поиск
+        searchLiveSteam("sale", currentMode === 'discounts');
+      }
+    }
+
+    function renderItems(items) {
       const list = document.getElementById("games");
       list.innerHTML = "";
 
-      const filtered = allGames.filter(g => {
-        const matchCat = (currentCategory === 'all') || (g.cat === currentCategory);
-        const matchQ = g.name.toLowerCase().includes(q);
-        return matchCat && matchQ;
-      });
-
-      if (!filtered.length) {
-        list.innerHTML = "<div class='status-msg'>Игры не найдены</div>";
+      if (!items || items.length === 0) {
+        list.innerHTML = `<div class="status-msg">Ничего не найдено</div>`;
         return;
       }
 
-      filtered.forEach(g => {
+      items.forEach(game => {
         const card = document.createElement("div");
         card.className = "card";
-        card.onclick = () => openSteamApp(g.id);
+        card.onclick = () => openSteamApp(game.id);
 
-        let priceHtml = '';
-        if (g.disc) {
-          priceHtml = `
-            <span class="discount-badge">${g.disc}</span>
-            <span class="old-price">${g.old}</span>
-            <span class="new-price">${g.price}</span>
-          `;
-        } else {
-          priceHtml = `<span class="new-price" style="color: #fff;">${g.price}</span>`;
-        }
+        const imgUrl = game.tiny_image || `https://cdn.akamai.steamstatic.com/steam/apps/${game.id}/header.jpg`;
+        const prices = formatPriceHtml(game);
 
         card.innerHTML = `
-          <img src="${g.img}" alt="${g.name}" loading="lazy">
+          <img src="${imgUrl}" alt="${game.name}" loading="lazy" onerror="this.src='https://store.steampowered.com/public/shared/images/header/globalheader_logo.png'">
           <div class="info">
-            <div class="title">${g.name}</div>
-            <div class="prices">${priceHtml}</div>
+            <div class="title" title="${game.name}">${game.name}</div>
+            <div class="prices">${prices}</div>
           </div>
         `;
         list.appendChild(card);
       });
     }
 
-    function filterCat(cat, btn) {
-      currentCategory = cat;
+    function switchCategory(mode, btn) {
+      currentMode = mode;
       document.querySelectorAll(".cat-btn").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
-      renderGames();
+
+      const query = document.getElementById("search").value.trim();
+      if (query.length > 0) {
+        searchLiveSteam(query, currentMode === 'discounts');
+      } else {
+        loadFeatured();
+      }
     }
 
-    document.getElementById("search").addEventListener("input", renderGames);
-    loadGames();
+    // Слушатель строки поиска с задержкой 400мс
+    document.getElementById("search").addEventListener("input", (e) => {
+      const query = e.target.value.trim();
+      clearTimeout(searchDebounceTimer);
+
+      if (query.length === 0) {
+        loadFeatured();
+        return;
+      }
+
+      searchDebounceTimer = setTimeout(() => {
+        searchLiveSteam(query, currentMode === 'discounts');
+      }, 400);
+    });
+
+    // Первый запуск
+    loadFeatured();
   </script>
 </body>
 </html>
