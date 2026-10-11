@@ -7,10 +7,10 @@
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
-      --bg: var(--tg-theme-bg-color, #12161c);
-      --card: var(--tg-theme-secondary-bg-color, #1a222d);
+      --bg: var(--tg-theme-bg-color, #101822);
+      --card: var(--tg-theme-secondary-bg-color, #1a2430);
       --text: var(--tg-theme-text-color, #ffffff);
-      --hint: var(--tg-theme-hint-color, #8395a7);
+      --hint: var(--tg-theme-hint-color, #8b9baa);
       --accent: var(--tg-theme-button-color, #0088cc);
       --discount-bg: #4c6b22;
       --discount-text: #beee11;
@@ -35,7 +35,7 @@
       padding: 12px 14px;
       border-radius: 12px;
       border: 1px solid rgba(255, 255, 255, 0.12);
-      background: rgba(0, 0, 0, 0.3);
+      background: rgba(0, 0, 0, 0.35);
       color: var(--text);
       font-size: 15px;
       outline: none;
@@ -72,7 +72,7 @@
     }
 
     .games-list { display: flex; flex-direction: column; gap: 10px; }
-    .status-msg { text-align: center; padding: 30px 10px; color: var(--hint); font-size: 14px; }
+    .status-msg { text-align: center; padding: 30px 10px; color: var(--hint); font-size: 14px; line-height: 1.5; }
 
     .card {
       display: flex;
@@ -131,19 +131,18 @@
 
   <header>
     <h1>SteamSell 🎮</h1>
-    <p>Официальные цены Steam (Россия, ₽) • Кликните для перехода</p>
+    <p>Официальные скидки Steam (Россия, ₽) • Кликните для перехода</p>
   </header>
 
-  <input type="text" id="search" class="search-box" placeholder="Поиск по всему Steam (название игры)...">
+  <input type="text" id="search" class="search-box" placeholder="Поиск по названию игры...">
 
   <div class="categories">
     <div class="cat-btn active" onclick="switchCategory('discounts', this)">🔥 Только скидки</div>
-    <div class="cat-btn" onclick="switchCategory('popular', this)">🏆 Популярные игры</div>
-    <div class="cat-btn" onclick="switchCategory('all', this)">🌐 Все категории</div>
+    <div class="cat-btn" onclick="switchCategory('all', this)">🌐 Все игры</div>
   </div>
 
   <div class="games-list" id="games">
-    <div class="status-msg">Загрузка данных из каталога Steam... ⏳</div>
+    <div class="status-msg">Загрузка актуальных цен Steam... ⏳</div>
   </div>
 
   <script>
@@ -153,8 +152,8 @@
       tg.ready();
     }
 
-    let currentMode = 'discounts';
-    let searchDebounceTimer = null;
+    let allGames = [];
+    let currentCategory = 'discounts';
 
     function openSteamApp(appId) {
       const url = `https://store.steampowered.com/app/${appId}/`;
@@ -165,159 +164,127 @@
       }
     }
 
-    function formatPriceHtml(item) {
-      // Бесплатная игра
-      if (item.is_free || (item.price && item.price.final === 0)) {
+    function formatPrice(game) {
+      if (game.is_free || game.price === 0) {
         return `<span class="free-price">Бесплатно</span>`;
       }
+      if (game.disc) {
+        return `
+          <span class="discount-badge">${game.disc}</span>
+          <span class="old-price">${game.old}</span>
+          <span class="new-price">${game.price}</span>
+        `;
+      }
+      if (game.price) {
+        return `<span class="new-price" style="color: #fff;">${game.price}</span>`;
+      }
+      return `<span class="no-price">Нет цены</span>`;
+    }
+
+    // Загрузка данных через резервные зеркала Steam API
+    async function loadDiscounts() {
+      const list = document.getElementById("games");
       
-      // Если есть объект с ценой
-      if (item.price) {
-        const p = item.price;
-        if (p.discount_percent > 0) {
-          const oldP = (p.initial / 100).toLocaleString('ru-RU') + " ₽";
-          const newP = (p.final / 100).toLocaleString('ru-RU') + " ₽";
-          return `
-            <span class="discount-badge">-${p.discount_percent}%</span>
-            <span class="old-price">${oldP}</span>
-            <span class="new-price">${newP}</span>
-          `;
+      const proxies = [
+        "https://corsproxy.io/?url=" + encodeURIComponent("https://store.steampowered.com/api/featuredcategories/?cc=ru&l=russian"),
+        "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent("https://store.steampowered.com/api/featuredcategories/?cc=ru&l=russian")
+      ];
+
+      let rawData = null;
+
+      for (let url of proxies) {
+        try {
+          const res = await fetch(url, { cache: "no-store" });
+          if (res.ok) {
+            rawData = await res.json();
+            if (rawData && rawData.specials) break;
+          }
+        } catch (e) {
+          continue;
         }
-        return `<span class="new-price" style="color: #fff;">${(p.final / 100).toLocaleString('ru-RU')} ₽</span>`;
       }
 
-      return `<span class="no-price">В корзину / Нет цены</span>`;
-    }
-
-    // Живой поиск по каталогу Steam (любая игра)
-    async function searchLiveSteam(query, onlyDiscounts = false) {
-      const list = document.getElementById("games");
-      list.innerHTML = `<div class="status-msg">Поиск в базе Steam... ⏳</div>`;
-
-      const steamSearchUrl = `https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(query)}&l=russian&cc=ru`;
-      const proxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(steamSearchUrl)}`;
-
-      try {
-        const res = await fetch(proxy);
-        const data = await res.json();
-        let items = data.items || [];
-
-        if (onlyDiscounts) {
-          items = items.filter(g => g.price && g.price.discount_percent > 0);
-        }
-
-        renderItems(items);
-      } catch (err) {
-        list.innerHTML = `<div class="status-msg">Не удалось загрузить результаты. Проверьте интернет.</div>`;
-      }
-    }
-
-    // Загрузка стартовой витрины актуальных предложений
-    async function loadFeatured() {
-      const list = document.getElementById("games");
-      list.innerHTML = `<div class="status-msg">Получение актуальных скидок Steam... ⏳</div>`;
-
-      const steamUrl = "https://store.steampowered.com/api/featuredcategories/?cc=ru&l=russian";
-      const proxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(steamUrl)}`;
-
-      try {
-        const res = await fetch(proxy);
-        const data = await res.json();
-        let items = [];
-
-        if (currentMode === 'discounts') {
-          // Выбираем только игры со скидкой
-          const specials = data.specials?.items || [];
-          items = specials.map(g => ({
-            id: g.id,
-            name: g.name,
-            tiny_image: g.header_image || `https://cdn.akamai.steamstatic.com/steam/apps/${g.id}/header.jpg`,
-            price: {
-              initial: g.original_price,
-              final: g.final_price,
-              discount_percent: g.discount_percent
-            }
-          }));
-        } else {
-          // Все популярные/лидеры
-          const top = data.top_sellers?.items || [];
-          items = top.map(g => ({
-            id: g.id,
-            name: g.name,
-            tiny_image: g.header_image || `https://cdn.akamai.steamstatic.com/steam/apps/${g.id}/header.jpg`,
-            price: {
-              initial: g.original_price,
-              final: g.final_price,
-              discount_percent: g.discount_percent || 0
-            }
-          }));
-        }
-
-        renderItems(items);
-      } catch (err) {
-        // Запасной поиск
-        searchLiveSteam("sale", currentMode === 'discounts');
-      }
-    }
-
-    function renderItems(items) {
-      const list = document.getElementById("games");
-      list.innerHTML = "";
-
-      if (!items || items.length === 0) {
-        list.innerHTML = `<div class="status-msg">Ничего не найдено</div>`;
+      if (!rawData) {
+        list.innerHTML = `
+          <div class="status-msg">
+            ⚠️ Ограничение сети Telegram WebApp.<br>
+            Используйте поиск в боте или перезапустите приложение.
+          </div>
+        `;
         return;
       }
 
-      items.forEach(game => {
+      const parsed = [];
+      const seen = new Set();
+
+      function extractGames(items, isSpecial) {
+        if (!items) return;
+        items.forEach(g => {
+          if (!g || !g.id || seen.has(g.id)) return;
+          seen.add(g.id);
+
+          const hasDisc = Boolean(g.discount_percent && g.discount_percent > 0);
+          parsed.push({
+            id: g.id,
+            name: g.name,
+            isSpecial: isSpecial,
+            disc: hasDisc ? `-${g.discount_percent}%` : null,
+            old: hasDisc && g.original_price ? (g.original_price / 100).toLocaleString('ru-RU') + " ₽" : null,
+            price: g.final_price !== undefined ? (g.final_price === 0 ? "Бесплатно" : (g.final_price / 100).toLocaleString('ru-RU') + " ₽") : null,
+            img: g.header_image || `https://cdn.akamai.steamstatic.com/steam/apps/${g.id}/header.jpg`
+          });
+        });
+      }
+
+      extractGames(rawData.specials?.items, true);
+      extractGames(rawData.top_sellers?.items, false);
+      extractGames(rawData.new_releases?.items, false);
+
+      allGames = parsed;
+      render();
+    }
+
+    function render() {
+      const q = document.getElementById("search").value.toLowerCase().trim();
+      const list = document.getElementById("games");
+      list.innerHTML = "";
+
+      const filtered = allGames.filter(g => {
+        const matchCat = (currentCategory === 'all') || (currentCategory === 'discounts' && g.disc);
+        const matchQ = g.name.toLowerCase().includes(q);
+        return matchCat && matchQ;
+      });
+
+      if (!filtered.length) {
+        list.innerHTML = `<div class="status-msg">Игры не найдены</div>`;
+        return;
+      }
+
+      filtered.forEach(g => {
         const card = document.createElement("div");
         card.className = "card";
-        card.onclick = () => openSteamApp(game.id);
-
-        const imgUrl = game.tiny_image || `https://cdn.akamai.steamstatic.com/steam/apps/${game.id}/header.jpg`;
-        const prices = formatPriceHtml(game);
+        card.onclick = () => openSteamApp(g.id);
 
         card.innerHTML = `
-          <img src="${imgUrl}" alt="${game.name}" loading="lazy" onerror="this.src='https://store.steampowered.com/public/shared/images/header/globalheader_logo.png'">
+          <img src="${g.img}" alt="${g.name}" loading="lazy">
           <div class="info">
-            <div class="title" title="${game.name}">${game.name}</div>
-            <div class="prices">${prices}</div>
+            <div class="title" title="${g.name}">${g.name}</div>
+            <div class="prices">${formatPrice(g)}</div>
           </div>
         `;
         list.appendChild(card);
       });
     }
 
-    function switchCategory(mode, btn) {
-      currentMode = mode;
+    function switchCategory(cat, btn) {
+      currentCategory = cat;
       document.querySelectorAll(".cat-btn").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
-
-      const query = document.getElementById("search").value.trim();
-      if (query.length > 0) {
-        searchLiveSteam(query, currentMode === 'discounts');
-      } else {
-        loadFeatured();
-      }
+      render();
     }
 
-    // Слушатель строки поиска с задержкой 400мс
-    document.getElementById("search").addEventListener("input", (e) => {
-      const query = e.target.value.trim();
-      clearTimeout(searchDebounceTimer);
-
-      if (query.length === 0) {
-        loadFeatured();
-        return;
-      }
-
-      searchDebounceTimer = setTimeout(() => {
-        searchLiveSteam(query, currentMode === 'discounts');
-      }, 400);
-    });
-
-    // Первый запуск
-    loadFeatured();
+    document.getElementById("search").addEventListener("input", render);
+    loadDiscounts();
   </script>
 </body>
 </html>
