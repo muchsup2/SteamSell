@@ -10,7 +10,7 @@
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);padding:0 14px 90px}
 .top{position:sticky;top:0;z-index:5;background:var(--bg);padding:14px 0 10px}
-h1{font-size:22px;font-weight:800;letter-spacing:-.3px}
+h1{font-size:22px;font-weight:800}
 .sub{font-size:12px;color:var(--hint);margin:2px 0 12px}
 #q{width:100%;padding:12px 16px;border-radius:14px;border:0;background:var(--card);color:var(--text);font-size:15px;outline:none}
 #list{display:flex;flex-direction:column;gap:10px;margin-top:6px}
@@ -24,20 +24,34 @@ h1{font-size:22px;font-weight:800;letter-spacing:-.3px}
 .prices{display:flex;align-items:center;gap:7px;font-size:13px;flex-wrap:wrap}
 .badge{background:#4c6b22;color:#beee11;font-weight:700;font-size:11px;padding:3px 6px;border-radius:6px}
 s{color:var(--hint);font-size:12px}
-.sale{color:#6fa820}.free{color:#34c759}.muted{color:var(--hint);font-size:12px}
+.sale{color:#6fa820}.free{color:#34c759}.muted{color:var(--hint);font-size:13px}
 .trend{font-size:11px;font-weight:600}.down{color:#34c759}.up{color:#ff5d5d}
 .star{border:0;background:none;font-size:24px;color:var(--hint);padding:10px 14px;cursor:pointer}
 .star.on{color:#ffb800}
-nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--bg);border-top:1px solid rgba(128,128,128,.2);padding-bottom:env(safe-area-inset-bottom,0)}
+nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--bg);border-top:1px solid rgba(128,128,128,.2);padding-bottom:env(safe-area-inset-bottom,0);z-index:10}
 .tab{flex:1;border:0;background:none;color:var(--hint);padding:9px 0 8px;font-size:11px;display:flex;flex-direction:column;align-items:center;gap:2px}
 .tab span{font-size:21px}
 .tab.active{color:var(--accent);font-weight:700}
+#ov{position:fixed;inset:0;background:rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:opacity .3s;z-index:20}
+#ov.show{opacity:1;pointer-events:auto}
+#sheet{position:fixed;left:0;right:0;bottom:0;max-height:90vh;overflow-y:auto;background:var(--bg);border-radius:22px 22px 0 0;transform:translateY(105%);transition:transform .38s cubic-bezier(.2,.8,.2,1);z-index:21;padding-bottom:env(safe-area-inset-bottom,0)}
+#sheet.show{transform:none}
+.hero{width:100%;aspect-ratio:460/215;object-fit:cover;display:block;border-radius:22px 22px 0 0}
+.sb{padding:16px}
+h2{font-size:20px;line-height:1.25}
+.row{margin-top:14px;font-size:14px;line-height:1.5}
+.lbl{font-size:12px;color:var(--hint);margin-bottom:3px;text-transform:uppercase;letter-spacing:.4px}
+.cmp{background:var(--card);border-radius:14px;padding:12px;margin-top:14px;font-size:14px;line-height:1.7}
+.cmp div{display:flex;justify-content:space-between;gap:8px}
+.btns{display:flex;gap:8px;margin-top:18px}
+.btn{flex:1;padding:14px;border:0;border-radius:14px;background:var(--accent);color:#fff;font-size:15px;font-weight:600}
+.btn.sec{flex:0 0 auto;background:var(--card);color:var(--text)}
 </style>
 </head>
 <body>
 <div class="top">
   <h1>SteamSell 🎮</h1>
-  <p class="sub">Цены Steam для РФ (₽) • нажмите на игру, чтобы открыть в Steam</p>
+  <p class="sub">Цены Steam для РФ (₽) • нажмите на игру, чтобы узнать подробнее</p>
   <input id="q" type="text" placeholder="Поиск по всему каталогу Steam...">
 </div>
 <div id="list"></div>
@@ -47,21 +61,23 @@ nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--bg);bor
   <button class="tab" data-t="new" onclick="setTab('new')"><span>🆕</span>Новинки</button>
   <button class="tab" data-t="favs" onclick="setTab('favs')"><span>⭐</span>Избранное</button>
 </nav>
+<div id="ov" onclick="closeSheet()"></div>
+<div id="sheet"><div id="sc"></div></div>
 <script>
 const API="https://green-brook-6734.daniilbobkov47.workers.dev";
 const tg=window.Telegram?.WebApp; if(tg){tg.expand();tg.ready();}
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const txt=s=>new DOMParser().parseFromString(s||'','text/html').body.textContent;
 const rub=c=>(c/100).toLocaleString('ru-RU')+' ₽';
-const img=id=>`https://cdn.akamai.steamstatic.com/steam/apps/${id}/header.jpg`;
+const cdn=id=>`https://cdn.akamai.steamstatic.com/steam/apps/${id}/header.jpg`;
 let tab='deals',data={deals:[],top:[],new:[]},prices={},searchRes=null,failed=false,timer,known={};
 let favs={};try{favs=JSON.parse(localStorage.getItem('favs')||'{}')}catch(e){}
 const saveFavs=()=>{try{localStorage.setItem('favs',JSON.stringify(favs))}catch(e){}};
 
 async function api(p){const r=await fetch(API+p);if(!r.ok)throw 0;return r.json()}
-const norm=g=>({id:g.id,name:g.name,img:img(g.id),old:g.original_price,price:g.final_price,disc:g.discount_percent||0});
-
-function openApp(id){const u=`https://store.steampowered.com/app/${id}/`;tg?.openLink?tg.openLink(u):window.open(u,'_blank')}
+const norm=g=>({id:g.id,name:g.name,img:g.header_image||g.large_capsule_image||cdn(g.id),old:g.original_price,price:g.final_price,disc:g.discount_percent||0});
+function openUrl(u){tg?.openLink?tg.openLink(u):window.open(u,'_blank')}
 
 function priceHTML(g){
   if(g.price===0)return '<b class="free">Бесплатно</b>';
@@ -76,11 +92,11 @@ function card(g){
     const d=g.price-f.p;
     extra=`<div class="trend ${d<0?'down':'up'}">${d<0?'▼ Подешевела':'▲ Подорожала'} на ${rub(Math.abs(d))} (с момента добавления)</div>`;
   }
-  return `<div class="card" onclick="openApp(${g.id})"><img src="${g.img}" loading="lazy" alt=""><div class="info"><div class="title">${esc(g.name)}</div><div class="prices">${priceHTML(g)}</div>${extra}</div><button class="star ${f?'on':''}" onclick="toggleFav(event,${g.id})">${f?'★':'☆'}</button></div>`;
+  return `<div class="card" onclick="openGame(${g.id})"><img src="${g.img}" loading="lazy" alt="" onerror="this.onerror=null;this.src='${cdn(g.id)}'"><div class="info"><div class="title">${esc(g.name)}</div><div class="prices">${priceHTML(g)}</div>${extra}</div><button class="star ${f?'on':''}" onclick="toggleFav(event,${g.id})">${f?'★':'☆'}</button></div>`;
 }
 
 function toggleFav(e,id){
-  e.stopPropagation();
+  e?.stopPropagation();
   if(favs[id])delete favs[id];
   else{const g=known[id];favs[id]={id,name:g.name,img:g.img,p:g.price??null}}
   saveFavs();tg?.HapticFeedback?.impactOccurred('light');render();
@@ -112,6 +128,51 @@ async function loadFavPrices(){
   }catch(e){}
 }
 
+/* ---------- Окно с описанием ---------- */
+function closeSheet(){$('sheet').classList.remove('show');$('ov').classList.remove('show')}
+async function openGame(id){
+  $('sc').innerHTML='<div class="msg">Загружаем... ⏳</div>';
+  $('sheet').classList.add('show');$('ov').classList.add('show');
+  try{
+    const d=await api('/app?id='+id),a=d.app,r=d.reviews;
+    if(!a){$('sc').innerHTML=`<div class="msg">Нет данных об игре<div class="btns"><button class="btn" onclick="openUrl('https://store.steampowered.com/app/${id}/')">Открыть в Steam</button></div></div>`;return}
+    const po=a.price_overview;
+    const sp=a.is_free?{price:0}:po?{price:po.final,old:po.initial,disc:po.discount_percent}:{price:null};
+    let rev='Пока нет отзывов';
+    if(r&&r.total_reviews>0)rev=`👍 ${Math.round(100*r.total_positive/r.total_reviews)}% положительных · ${r.total_reviews.toLocaleString('ru-RU')} отзывов`;
+    if(a.metacritic?.score)rev+=`<br>Metacritic: ${a.metacritic.score}`;
+    const langs=txt((a.supported_languages||'').split('<br>')[0]).replace(/\*/g,'')||'Нет данных';
+    $('sc').innerHTML=`<img class="hero" src="${esc(a.header_image||cdn(id))}" alt="">
+    <div class="sb"><h2>${esc(a.name)}</h2>
+    <div class="cmp"><div><span>Steam</span><span class="prices">${priceHTML(sp)}</span></div><div id="epic"><span>Epic Games</span><span class="muted">ищем...</span></div><div id="note" class="muted" style="display:block"></div></div>
+    <div class="row"><div class="lbl">Отзывы Steam</div>${rev}</div>
+    <div class="row"><div class="lbl">Описание</div>${esc(txt(a.short_description)||'Нет описания')}</div>
+    <div class="row"><div class="lbl">Языки</div>${esc(langs)}</div>
+    <div class="btns"><button class="btn sec" onclick="toggleFav(null,${id});this.textContent=favs[${id}]?'★':'☆'">${favs[id]?'★':'☆'}</button><button class="btn" onclick="openUrl('https://store.steampowered.com/app/${id}/')">Открыть в Steam</button></div></div>`;
+    loadEpic(a.name,sp.price);
+  }catch(e){$('sc').innerHTML='<div class="msg">Не удалось загрузить данные об игре</div>'}
+}
+
+async function loadEpic(name,sp){
+  const el=$('epic');
+  try{
+    const d=await api('/epic?term='+encodeURIComponent(name));
+    const n=s=>s.toLowerCase().replace(/[^a-zа-я0-9]/g,'');
+    const els=d.data.Catalog.searchStore.elements;
+    const e=els.find(x=>n(x.title)===n(name))||els.find(x=>n(x.title).includes(n(name))||n(name).includes(n(x.title)));
+    if(!e){el.innerHTML='<span>Epic Games</span><span class="muted">Нет в магазине</span>';return}
+    const t=e.price.totalPrice,k=10**t.currencyInfo.decimals,cur=t.currencyCode==='RUB'?'₽':t.currencyCode;
+    const f=v=>(v/k).toLocaleString('ru-RU')+' '+cur;
+    const slug=(e.productSlug||e.urlSlug||'').replace(/\/home$/,'');
+    const off=t.originalPrice>t.discountPrice?`<s>${f(t.originalPrice)}</s> `:'';
+    el.innerHTML=`<span>Epic Games</span><span class="prices" onclick="openUrl('https://store.epicgames.com/ru/p/${slug}')">${off}<b>${t.discountPrice===0?'Бесплатно':f(t.discountPrice)}</b></span>`;
+    if(cur==='₽'&&sp!=null){
+      const diff=sp/100-t.discountPrice/k,m=Math.round(Math.abs(diff)).toLocaleString('ru-RU')+' ₽';
+      $('note').textContent=Math.abs(diff)<1?'Цены одинаковые':diff>0?`💡 В Epic дешевле на ${m}`:`💡 В Steam дешевле на ${m}`;
+    }
+  }catch(err){el.innerHTML='<span>Epic Games</span><span class="muted">данные недоступны</span>'}
+}
+
 async function init(){
   failed=false;$('list').innerHTML='<div class="msg">Загружаем... ⏳</div>';
   try{
@@ -131,7 +192,7 @@ $('q').addEventListener('input',e=>{
     try{
       const d=await api('/search?term='+encodeURIComponent(q));
       if($('q').value.trim()!==q)return;
-      searchRes=(d.items||[]).map(g=>({id:g.id,name:g.name,img:img(g.id),old:g.price?.initial,price:g.price?g.price.final:null,disc:g.price?.discount_percent||0}));
+      searchRes=(d.items||[]).map(g=>({id:g.id,name:g.name,img:g.tiny_image||cdn(g.id),old:g.price?.initial,price:g.price?g.price.final:null,disc:g.price?.discount_percent||0}));
       render();
     }catch(err){$('list').innerHTML='<div class="msg">Ошибка поиска. Попробуйте ещё раз.</div>'}
   },400);
